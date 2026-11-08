@@ -1,0 +1,57 @@
+#include <Geode/Geode.hpp>
+#include <Geode/modify/PlayLayer.hpp>
+#include <Geode/modify/GJBaseGameLayer.hpp>
+#include <deque>
+
+using namespace geode::prelude;
+
+constexpr int HISTORY = 10;   // cuántos frames atrás puede rebobinar
+constexpr int WINDOW  = 6;    // frames máximos entre tu click y la muerte
+
+class $modify(AssistPlayLayer, PlayLayer) {
+    struct Fields {
+        std::deque<Ref<CheckpointObject>> history;
+        int frame = 0;
+        int lastClick = -999;
+        bool pendingClick = false;
+    };
+
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
+        auto f = m_fields.self();
+        f->frame++;
+
+        if (f->pendingClick) {
+            f->pendingClick = false;
+            GJBaseGameLayer::handleButton(true, 1, true); // click en el frame rebobinado
+        }
+
+        f->history.push_back(this->createCheckpoint());
+        if (f->history.size() > HISTORY) f->history.pop_front();
+    }
+
+    void destroyPlayer(PlayerObject* player, GameObject* obj) {
+        auto f = m_fields.self();
+        bool clickedRecently = f->frame - f->lastClick <= WINDOW;
+
+        if (clickedRecently && !f->history.empty() && obj != m_anticheatSpike) {
+            this->loadFromCheckpoint(f->history.front());
+            f->history.clear();
+            f->lastClick = -999;
+            f->pendingClick = true;
+            return; // cancela la muerte
+        }
+        PlayLayer::destroyPlayer(player, obj);
+    }
+};
+
+class $modify(AssistBase, GJBaseGameLayer) {
+    void handleButton(bool down, int button, bool isPlayer1) {
+        if (down) {
+            if (auto pl = PlayLayer::get()) {
+                static_cast<AssistPlayLayer*>(pl)->m_fields->lastClick = static_cast<AssistPlayLayer*>(pl)->m_fields->frame;
+            }
+        }
+        GJBaseGameLayer::handleButton(down, button, isPlayer1);
+    }
+};
